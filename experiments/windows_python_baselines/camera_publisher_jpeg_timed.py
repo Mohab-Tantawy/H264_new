@@ -1,0 +1,98 @@
+import time
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage
+from cv_bridge import CvBridge
+from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+import cv2
+
+class UsbCameraPublisher(Node):
+    def __init__(self):
+        super().__init__('usb_camera_publisher')
+
+        # Parameters
+        self.declare_parameter('device_index', 0)       # /dev/video0
+        self.declare_parameter('publish_rate', 15.0)    # Hz
+        self.declare_parameter('frame_id', 'camera')
+        self.declare_parameter('topic', '/camera/image_raw')
+
+        device_index = self.get_parameter('device_index').value
+        rate         = self.get_parameter('publish_rate').value
+        self.frame_id = self.get_parameter('frame_id').value
+        topic        = self.get_parameter('topic').value
+
+        # QoS
+        qos_profile = QoSProfile(
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            durability=QoSDurabilityPolicy.VOLATILE,
+            history=QoSHistoryPolicy.KEEP_LAST,
+            depth=1 # always update with the latest image, no need to keep old ones
+        )
+
+        self.bridge = CvBridge()
+        self.pub = self.create_publisher(CompressedImage, topic, qos_profile)
+
+        # Open capture - using OpenCV to access the USB camera
+        self.cap = cv2.VideoCapture(device_index if device_index is not None else 0)
+        if not self.cap.isOpened():
+            self.get_logger().error(f'Failed to open camera at index {device_index}')
+            raise RuntimeError('Camera not available')
+
+        self.get_logger().info(f'Camera opened at /dev/video{device_index}, publishing to {topic}')
+
+        # Rolling timing stats
+        self._frame_count = 0
+        self._encode_time_sum_ms = 0.0
+
+        self.create_timer(1.0 / rate, self.timer_cb)
+
+    def timer_cb(self):
+        ret, frame = self.cap.read()
+        if ret and frame is not None:
+            # Timing starts here to match the ffmpeg version, where the
+            # encode happens inside pub.publish(). Here we time the JPEG
+            # encode explicitly since it's a separate call.
+            t0 = time.perf_counter()
+            success, compressed_image = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 40])
+            t1 = time.perf_counter()
+
+            if success:
+                msg = CompressedImage()
+                msg.format = "jpeg"
+                msg.data = compressed_image.tobytes()
+                msg.header.stamp = self.get_clock().now().to_msg()
+                msg.header.frame_id = self.frame_id
+
+                self.pub.publish(msg)
+                t2 = time.perf_counter()
+
+                encode_ms = (t1 - t0) * 1000.0
+                publish_ms = (t2 - t1) * 1000.0
+                total_ms = (t2 - t0) * 1000.0
+
+                self._frame_count += 1
+                self._encode_time_sum_ms += total_ms
+                avg_ms = self._encode_time_sum_ms / self._frame_count
+
+                self.get_logger().info(
+                    f'[jpeg] encode: {encode_ms:.2f} ms, publish: {publish_ms:.2f} ms, '
+                    f'total: {total_ms:.2f} ms (avg: {avg_ms:.2f} ms, frame #{self._frame_count})'
+                )
+
+    def destroy_node(self):
+        self.cap.release()
+        super().destroy_node()
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = UsbCameraPublisher()
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>video_streaming_cpp</name>
+  <version>0.0.1</version>
+  <description>Camera publisher and viewer that stream H.264 through image_transport's ffmpeg plugin, with latency instrumentation.</description>
+  <maintainer email="you@example.com">Mohab Tantawy</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>image_transport</depend>
+  <depend>cv_bridge</depend>
+  <depend>sensor_msgs</depend>
+  <depend>libopencv-dev</depend>
+
+  <!-- The H.264 encoder/decoder plugin. Linux/macOS only (no win-64 build). -->
+  <exec_depend>ffmpeg_image_transport</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
